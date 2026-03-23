@@ -1,151 +1,215 @@
-# CCC-GeneCompss
-​	This is a cell-cell communication analysis tool based on the single-cell foundation model [GeneCompass](https://github.com/xCompass-AI/GeneCompass). It aims to replace traditional cell communication analysis tools like [CellChat](https://github.com/jinworks/CellChat?tab=readme-ov-file) and [CellPhoneDB](https://github.com/ventolab/CellphoneDB) by utilizing deep learning technology and large model methods for the analysis and research of cell-cell interactions and communication.
+# CCC-GeneCompass
 
+Cell-Cell Interaction Analysis Based on GeneCompass Foundation Model
 
+## Overview
 
-## 1. Data Preprocessing
+CCC-GeneCompass is a comprehensive tool for analyzing cell-cell interactions in single-cell data using the GeneCompass foundation model. This project integrates multiple state-of-the-art cell communication analysis methods to build a robust gold standard and predict cell interactions using deep learning approaches.
 
-### 1.1 H5AD to RDS
+## Key Features
 
-​	When performing cell-cell interaction analysis using [CellChat](https://github.com/jinworks/CellChat?tab=readme-ov-file) , for single-cell Counts matrix data in `.h5ad` or `.csv` format, converting it to the `.rds` format supported by R can improve the success rate of the analysis. We provide a Python script `./CellChatAnalysis/h5ad_to_csv.py`to convert `.h5ad` format data to `.csv`, and an R script `./CellChatAnalysis/csv_to_rds.R` to convert `.csv` data to `.rds` format.
+- **CellChat Integration**: Analyze cell-cell communications using ligand-receptor interactions
+- **CellPhoneDB Integration**: Identify significant interactions using statistical methods
+- **Gold Standard Construction**: Build consensus gold standards from multiple analysis tools
+- **GeneCompass Embeddings**: Generate high-dimensional embeddings using pretrained GeneCompass model
+- **GeneCompass Fine-Tuning**: Fine-tune GeneCompass model using regression tasks for cell interaction prediction
+  - Direct fine-tuning on GeneCompass model, not using simple classifiers
+  - Predict cell interaction strength scores using regression approach
+  - Preserve GeneCompass's deep feature learning capabilities
 
-### 1.2 Single-Cell Data Quality Control and Normalization
+## Analysis Pipeline
 
-​	Referencing the data preprocessing method of [GeneCompass](https://github.com/xCompass-AI/GeneCompass), we provide `./preprocess/filter.py` and `./preprocess/normalized.py` to implement quality control for single-cell data. This includes filtering doublets, dead cells, removing broken cells, outlier cells, mitochondrial genes, and hemoglobin genes based on total gene counts and outlier statistics, retaining only protein-coding genes. The data is then normalized and token-encoded, converting the single-cell data into the Tokens form loadable by  [GeneCompass](https://github.com/xCompass-AI/GeneCompass).
-
-
-
-## 2. Constructing a Gold Standard for Cell-Cell Interactions
-
-Integrate traditional cell communication analysis tools  [CellChat](https://github.com/jinworks/CellChat?tab=readme-ov-file) and [CellPhoneDB](https://github.com/ventolab/CellphoneDB)  to build a gold standard for cell-cell interactions using a consensus score derived from both. The  [CellChat](https://github.com/jinworks/CellChat?tab=readme-ov-file)  interaction strength matrix and  [CellPhoneDB](https://github.com/ventolab/CellphoneDB)  results are merged based on sender and receiver roles. The interaction strength from   [CellChat](https://github.com/jinworks/CellChat?tab=readme-ov-file), and the mean and maximum interaction strengths from  [CellPhoneDB](https://github.com/ventolab/CellphoneDB)  are MinMax normalized (to the range 0-1). The average of these three normalized scores is calculated as the consensus score:
-
-$$
-Consensus Score= (𝑁𝑜𝑟𝑚_𝐶𝑒𝑙𝑙𝐶ℎ𝑎𝑡 + 𝑁𝑜𝑟𝑚_𝐶𝑃𝐷𝐵_𝑀𝑒𝑎𝑛 + 𝑁𝑜𝑟𝑚_𝐶𝑃𝐷𝐵_𝑀𝑎𝑥) / 3
-$$
-
-### 2.1 Cell-Cell Interaction Analysis Based on CellChat
-
-#### System Requirements
-
-**R Version:** ==4.3.3
-
-**Operating System:** Windows/Linux
-
-**Memory:** ≥ 16GB (recommended 40GB+ for large single-cell datasets)
-
-#### **Environment Setup**
-
-**Install CRAN Packages**
-
-```R
-install.packages(c("Seurat", "ggplot2", "patchwork", "dplyr", 
-                   "future", "RColorBrewer", "stringr"))
+```
+Single-cell Data (.h5ad)
+    │
+    ├─────────────┬─────────────┬─────────────┐
+    ▼             ▼             ▼             ▼
+Data      CellChat      CellPhoneDB
+Preproc.    Analysis       Analysis
+    │             │             │
+    ▼             ▼             ▼
+Normalized    Interaction    Interaction
+    │          Results        Results
+    │             │             │
+    └─────────────┴─────────────┘
+                  │
+                  ▼
+            Gold Standard
+            Construction
+                  │
+                  ▼
+          Generate Embeddings
+                  │
+                  ▼
+        GeneCompass Training
+                  │
+                  ▼
+        Interaction Prediction
 ```
 
-**Install Bioconductor Packages**
+## Project Structure
 
-```R
-if (!requireNamespace("BiocManager", quietly = TRUE))
-    install.packages("BiocManager")
-BiocManager::install("ComplexHeatmap")
+```
+CCC-GeneCompass/
+├── CellChatAnalysis/              # CellChat analysis tools
+│   ├── h5ad_to_csv_fixed.py       # h5ad to CSV conversion
+│   ├── csv_to_rds_fixed.R         # CSV to RDS conversion
+│   ├── CellChatAnalysis_fixed.R   # CellChat main script
+│   └── README.md                  # CellChat documentation
+├── CellPhoneAnalysis/             # CellPhoneDB analysis tools
+│   ├── prepare_DEGs_h5ad.py       # Generate DEGs
+│   ├── prepare_microenvs_h5ad.py  # Generate microenvironment file
+│   ├── CellPhoneAnalysis.py       # CellPhoneDB main script
+│   └── requirements.txt            # CellPhoneDB dependencies
+├── genecompass/                   # GeneCompass model files
+│   ├── modeling_bert.py           # BERT model definition
+│   ├── data_collator.py          # Data collator
+│   └── utils.py                  # Utility functions
+├── preprocess/                    # Data preprocessing
+│   ├── filter.py                  # Data filtering
+│   └── normalized.py             # Data normalization
+├── gold_standard/                # Gold standard output directory
+├── embeddings/                   # Embeddings output directory
+├── outputs/                      # Analysis output directory
+├── building_gold_standard_database.py  # Gold standard construction
+├── cell_cell_interaction.py       # Main analysis script
+├── generate_embeddings.py         # Embedding generation
+├── requirements.txt               # Python dependencies
+├── README.md                     # Main documentation (Chinese)
+├── README_EN.md                  # Main documentation (English)
+├── QUICKSTART.md                 # Quick start guide (Chinese)
+├── QUICKSTART_EN.md              # Quick start guide (English)
+└── LICENSE                       # License file
 ```
 
-**Install CellChat**
+## Quick Start
 
-```R
-install.packages("devtools")
-devtools::install_github("sqjin/CellChat")
-```
-
-### 2.2 Cell-Cell Interaction Analysis Based on CellPhoneDB
-
-#### System Requirements
-
-**Python Version:** ==3.12.0
-
-**Operating System:** Windows/Linux
-
-**Memory:** ≥ 16GB (recommended 40GB+ for large single-cell datasets)
-
-#### Environment Setup
+### 1. Environment Setup
 
 ```bash
-cd ./CellPhoneAnalysis
-conda create -n cpdb python==3.12.0
-conda activate cpdb
-pip install -r requirements.txt
-```
-
-#### Microenvironment Analysis Preparation
-
-```bash
-python prepare_microenvs_h5ad.py
-```
-
-#### Differential Expression Gene Preparation
-
-```bash
-python prepare_DEGs_h5ad.py
-```
-
-#### Run CellPhoneDB for Cell-Cell Interaction Analysis
-
-```bash
-python CellPhoneAnalysis.py
-```
-
-### 2.3 Gold Standard Construction
-
-Generate the gold standard as labels for fine-tuning the foundation model [GeneCompass](https://github.com/xCompass-AI/GeneCompass).
-
-```bash
-cd path/to/CCC-GeneCompass
-python building_gold_standard_database.py
-```
-
-
-
-## 3. Generating Embeddings
-
-Thefoundation model [GeneCompass](https://github.com/xCompass-AI/GeneCompass) performs cell-cell communication analysis by converting the single-cell data into high-dimensional vector representations called Embeddings. This step converts the normalized and token-encoded single-cell data from the **1.2 Single-Cell Transcriptomics Data Quality Control and Normalization** process into Embeddings.
-
-```bash
-cd path/to/CCC-GeneCompass
-python generate_embeddings.py
-```
-
-Generating Embeddings requires significant computational resources and time. For convenient verification, we provide an example of pre-generated Embeddings: https://pan.baidu.com/s/1X97G7PdJRHXYn5vako9RnQ?pwd=1uyh (Extraction code: 1uyh)
-
-
-
-## 4. Cell-Cell Interaction Analysis
-
-#### Environment Setup
-
-```bash
-cd path/to/CCC-GeneCompass
-conda create -n ccc python==3.12.0
+# Python environment
+conda create -n ccc python=3.10
 conda activate ccc
 pip install -r requirements.txt
+
+# R environment (for CellChat and CellPhoneDB)
+# Install necessary R packages
 ```
 
-If you encounter an error installing `transformers==4.30.0`, you can execute the following steps:
+### 2. Data Preparation
 
+- Download pretrained GeneCompass models
+- Prepare prior knowledge files
+- Prepare single-cell data in `.h5ad` format
+
+### 3. Run Analysis Pipeline
+
+For detailed instructions, see [QUICKSTART_EN.md](QUICKSTART_EN.md).
+
+## Core Components
+
+### CellChat Analysis
+
+CellChat is a powerful tool for inferring, analyzing, and visualizing cell-cell communication.
+
+**Key Features**:
+- Database of known ligand-receptor interactions
+- Probabilistic model for communication inference
+- Visualization tools for interaction networks
+
+**Usage**:
 ```bash
-conda install -c conda-forge tokenizers=0.13.3
-pip install transformers==4.30.0
+cd CellChatAnalysis
+python h5ad_to_csv_fixed.py --input data.h5ad --output ./output
+Rscript csv_to_rds_fixed.R ./output
+Rscript CellChatAnalysis_fixed.R ./output/seurat_obj.rds ./output
 ```
 
-Fine-tune the foundation model  [GeneCompass](https://github.com/xCompass-AI/GeneCompass)  for the downstream task of cell-cell interaction analysis using the [CellChat](https://github.com/jinworks/CellChat?tab=readme-ov-file) and [CellPhoneDB](https://github.com/ventolab/CellphoneDB)  consensus gold standard and the generated Embeddings, to obtain the cell-cell interaction matrix and visualization results.
+### CellPhoneDB Analysis
 
+CellPhoneDB uses statistical methods to identify significant cell-cell interactions.
+
+**Key Features**:
+- Statistical significance testing
+- Support for custom databases
+- Comprehensive interaction database
+
+**Usage**:
 ```bash
-cd path/to/CCC-GeneCompass
+cd CellPhoneAnalysis
+python prepare_DEGs_h5ad.py --h5ad data.h5ad --outdir ./output
+python prepare_microenvs_h5ad.py --h5ad data.h5ad --output ./output/microenv.tsv
+python CellPhoneAnalysis.py --h5ad data.h5ad --outdir ./output
+```
+
+### Gold Standard Construction
+
+Integrate results from CellChat and CellPhoneDB to build a consensus gold standard.
+
+**Method**:
+- Normalize interaction scores from both tools
+- Calculate consensus score: (Norm_CellChat + Norm_CPDB_Mean + Norm_CPDB_Max) / 3
+- Apply threshold to identify high-confidence interactions
+
+**Usage**:
+```bash
+python building_gold_standard_database.py \
+  --cellchat_dir ./cellchat_output \
+  --cpdb_dir ./cpdb_output \
+  --output_dir ./gold_standard \
+  --threshold_method quantile \
+  --threshold_value 0.7
+```
+
+### GeneCompass Embeddings
+
+Generate high-dimensional embeddings for cells using the pretrained GeneCompass model.
+
+**Usage**:
+```bash
+python generate_embeddings.py \
+  --dataset_path ./normalized_data/ \
+  --model_path ./pretrained_models/GeneCompass_Base \
+  --token_dict_path ./prior_knowledge/human_mouse_tokens.pickle \
+  --output_path ./embeddings/embeddings.pickle
+```
+
+### Cell-Cell Interaction Prediction
+
+Train a neural network model to predict cell-cell interactions using embeddings and gold standard labels.
+
+**Usage**:
+```bash
 python cell_cell_interaction.py
 ```
 
-For convenient verification, we provide pre-processed normalized data: [tabula_sapiens_liver](https://pan.baidu.com/s/1RsTlTB4aTlwlk5cHtIQtuA?pwd=b8d8#list/path=%2F)，(Extraction code: b8d8)
+## Output Files
 
-We also provide a pre-generated gold standard label data file: [complete_labeled_interactions.csv](https://pan.baidu.com/s/1tcELkJexk3LwN6frNNykbA?pwd=jmc6) (Extraction code: jmc6)
+### CellChat Outputs
+- `cellchat_communication.csv`: Cell communication events
+- `cellchat_pathways.csv`: Signaling pathways
+- `cell_interaction_strength_matrix.csv`: Interaction strength matrix
+- `communication_network.png`: Network visualization
+- `communication_heatmap.png`: Heatmap visualization
+
+### CellPhoneDB Outputs
+- `significant_means.txt`: Significant interactions
+- `means.txt`: All interaction means
+- `pvalues.txt`: Significance test results
+
+### Gold Standard Outputs
+- `complete_labeled_interactions.csv`: Complete labeled dataset
+- `machine_learning_dataset.csv`: ML dataset with features
+- `gold_standard_interactions.csv`: High-confidence positive samples
+- `dataset_statistics.csv`: Dataset statistics
+- Various visualizations (`.png` files)
+
+### GeneCompass Outputs
+- `embeddings.pickle`: Cell/gene embedding vectors
+- `best_model.pt`: Trained model
+- `evaluation_results.pkl`: Evaluation metrics
+
+### GeneCompass Pretrained-model
 
 Pretrained models of GeneCompass on 100 million single-cell transcriptomes from humans and mice. Put pretrained_model dir under main path.('./pretrained_models/GeneCompass_Small', './pretrained_models/GeneCompass_Base')
 
@@ -153,3 +217,51 @@ Pretrained models of GeneCompass on 100 million single-cell transcriptomes from 
 | ----------------- | ----------------------------------- | -------------------------------------------------- |
 | GeneCompass_Small | Pretrained on 6-layer GeneCompass.  | [Link](https://www.scidb.cn/en/anonymous/SUZOdk1y) |
 | GeneCompass_Base  | Pretrained on 12-layer GeneCompass. | [Link](https://www.scidb.cn/en/anonymous/SUZOdk1y) |
+
+## Requirements
+
+### System Requirements
+- Python: 3.8+
+- R: 4.0+
+- Memory: At least 16GB (recommended 32GB+)
+- GPU: Optional, for accelerating model training
+
+### Python Dependencies
+See `requirements.txt` for complete list.
+
+### R Dependencies
+- Seurat
+- CellChat
+- dplyr
+- ggplot2
+- ComplexHeatmap
+- patchwork
+
+## Citation
+
+If you use this tool in your research, please cite:
+
+- **GeneCompass**: Yang, X., Liu, G., Feng, G. *et al.* GeneCompass: deciphering universal gene regulatory mechanisms with a knowledge-informed cross-species foundation model. *Cell Res* **34**, 830–845 (2024). https://doi.org/10.1038/s41422-024-01034-y
+- **CellChat**: Jin, S., et al. (2021). Inferring cell-cell communication by integrating ligand-receptor, signaling gene, and TF-target networks. Nature Protocols.
+- **CellPhoneDB**: Vento-Tormo, R., et al. (2018). Single-cell reconstruction of developmental trajectories during human endometriosis. Science.
+
+## License
+
+This project follows the license of the original GeneCompass project.
+
+## Acknowledgments
+
+- GeneCompass: Foundation model for single-cell analysis
+- CellChat: Cell-cell communication inference tool
+- CellPhoneDB: Database of ligand-receptor interactions
+
+## Contact
+
+For questions, issues, or suggestions, please:
+- Submit an Issue on GitHub
+- Contact the development team
+
+---
+
+**Version**: 1.0.2
+**Release Date**: March 2026

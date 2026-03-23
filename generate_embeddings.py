@@ -1,118 +1,190 @@
+#!/usr/bin/env python3
+"""
+Generate GeneCompass Embeddings for Single-Cell Data
+
+This script generates embeddings for single-cell data using the pretrained
+GeneCompass model.
+"""
+
 from datasets import load_from_disk
 import torch
 from tqdm import tqdm
 import pickle
 import os
 import gc
-from genecompass.modeling_bert import BertForMaskedLM
+import logging
+import numpy as np
 
-# 设置环境
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
-token_dict_path = './prior_knowledge/human_mouse_tokens.pickle'
-dataset_path = '/mnt/data_sdb/wangx/data/SingleCell/normalized_data/TabulaSapiens/tabula_sapiens_liver/'
-
-checkpoint_path = "./pretrained_models/GeneCompass_Base"
-
-with open(token_dict_path, "rb") as fp:
-    token_dictionary = pickle.load(fp)
-
-# 加载知识嵌入
-knowledges = dict()
-from genecompass.utils import load_prior_embedding
-
-out = load_prior_embedding(token_dictionary_or_path=token_dict_path)
-
-knowledges['promoter'] = out[0]
-knowledges['co_exp'] = out[1]
-knowledges['gene_family'] = out[2]
-knowledges['peca_grn'] = out[3]
-knowledges['homologous_gene_human2mouse'] = out[4]
-
-# 加载数据集和模型
-dataset = load_from_disk(dataset_path)
-model = BertForMaskedLM.from_pretrained(
-    checkpoint_path,
-    knowledges=knowledges,
-).to("cuda")
-model.eval()
-
-# 显存优化配置
-torch.backends.cudnn.benchmark = True  # 加速卷积运算
-torch.cuda.empty_cache()  # 清空缓存
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
-# 批量处理函数 - 优化显存使用
-def process_batch_optimized(batch_indices, dataset, model):
+def process_batch_optimized(batch_indices, dataset, model, device):
+    """Process a batch of data with optimized memory usage"""
     with torch.no_grad():
-        # 一次性获取所有数据
+        # Get all data at once
         start_idx, end_idx = batch_indices
-        input_id = torch.tensor(dataset['input_ids'][start_idx:end_idx]).cuda()
-        values = torch.tensor(dataset['values'][start_idx:end_idx]).cuda()
-        species = torch.tensor(dataset['species'][start_idx:end_idx]).cuda()
+        input_ids = torch.tensor(dataset['input_ids'][start_idx:end_idx]).to(device)
+        values = torch.tensor(dataset['values'][start_idx:end_idx]).to(device)
+        species = torch.tensor(dataset['species'][start_idx:end_idx]).to(device)
 
-        # 前向传播
-        emb = model.bert.forward(input_ids=input_id, values=values, species=species)[0]
-        emb = emb[:, 1:, :]  # 去除第一个token
+        # Forward pass
+        emb = model.bert.forward(input_ids=input_ids, values=values, species=species)[0]
+        emb = emb[:, 1:, :]  # Remove first token
 
-        # 立即移动到CPU并转换为numpy以释放显存
+        # Move to CPU and convert to numpy to free GPU memory
         emb_cpu = emb.cpu().numpy()
 
-        # 清理GPU显存
-        del input_id, values, species, emb
+        # Clean GPU memory
+        del input_ids, values, species, emb
         torch.cuda.empty_cache()
 
         return emb_cpu
 
 
-# 主处理循环
-batchsize = 128
-total_length = len(dataset)
-iters = total_length // batchsize
+def generate_embeddings(dataset_path, model_path, token_dict_path, output_path, 
+                       batch_size=128, gpu_ids="0"):
+    """
+    Generate embeddings for single-cell dataset
+    
+    Args:
+        dataset_path: Path to the preprocessed dataset
+        model_path: Path to the pretrained GeneCompass model
+        token_dict_path: Path to token dictionary
+        output_path: Path to save the embeddings
+        batch_size: Batch size for processing
+        gpu_ids: GPU IDs to use (e.g., "0,1,2,3")
+    """
+    # Set environment
+    os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids
+    
+    logger.info(f"Loading token dictionary from {token_dict_path}")
+    with open(token_dict_path, "rb") as fp:
+        token_dictionary = pickle.load(fp)
+    
+    # Load knowledge embeddings
+    logger.info("Loading knowledge embeddings...")
+    knowledges = dict()
+    
+    try:
+        from genecompass.utils import load_prior_embedding
+        out = load_prior_embedding(token_dictionary_or_path=token_dict_path)
+        
+        knowledges['promoter'] = out[0]
+        knowledges['co_exp'] = out[1]
+        knowledges['gene_family'] = out[2]
+        knowledges['peca_grn'] = out[3]
+        knowledges['homologous_gene_human2mouse'] = out[4]
+        logger.info("Knowledge embeddings loaded successfully")
+    except Exception as e:
+        logger.warning(f"Failed to load knowledge embeddings: {e}")
+        logger.info("Continuing without knowledge embeddings...")
+        knowledges = None
+    
+    # Load dataset and model
+    logger.info(f"Loading dataset from {dataset_path}")
+    dataset = load_from_disk(dataset_path)
+    
+    logger.info(f"Loading model from {model_path}")
+    try:
+        from genecompass.modeling_bert import BertForMaskedLM
+        model = BertForMaskedLM.from_pretrained(
+            model_path,
+            knowledges=knowledges if knowledges else None,
+        )
+    except Exception as e:
+        logger.error(f"Failed to load GeneCompass model: {e}")
+        raise
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = model.to(device)
+    model.eval()
+    
+    logger.info(f"Using device: {device}")
+    
+    # Memory optimization
+    torch.backends.cudnn.benchmark = True
+    torch.cuda.empty_cache()
+    
+    # Main processing loop
+    total_length = len(dataset)
+    iters = total_length // batch_size
+    
+    logger.info(f"Starting processing: Total samples: {total_length}, "
+                f"Batch size: {batch_size}, Total iterations: {iters + 1}")
+    
+    # Use list to store results on CPU
+    emb_list = []
+    
+    with torch.no_grad():
+        for i in tqdm(range(iters + 1), desc="Processing batches"):
+            try:
+                # Calculate current batch indices
+                start_idx = i * batch_size
+                if i != iters:
+                    end_idx = (i + 1) * batch_size
+                else:
+                    end_idx = total_length
+                
+                # Process current batch
+                emb_batch = process_batch_optimized(
+                    (start_idx, end_idx), dataset, model, device
+                )
+                emb_list.append(emb_batch)
+                
+                # Periodic cleanup (every 10 batches)
+                if i % 10 == 0:
+                    gc.collect()
+                    torch.cuda.empty_cache()
+            
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    logger.error(f"Batch {i} ran out of GPU memory. Try reducing batch size.")
+                    raise e
+                else:
+                    raise e
+    
+    # Save results
+    logger.info(f"Saving results to {output_path}")
+    
+    # Concatenate all results
+    emb_numpy = np.concatenate(emb_list, axis=0)
+    
+    # Create output directory if needed
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    with open(output_path, 'wb') as f:
+        pickle.dump(emb_numpy, f)
+    
+    logger.info(f"Processing completed! Embeddings shape: {emb_numpy.shape}")
+    logger.info(f"Embeddings saved to {output_path}")
 
-print(f"开始处理，总样本数: {total_length}, 批次大小: {batchsize}, 总迭代次数: {iters + 1}")
 
-# 使用列表存储CPU上的结果
-emb_list = []
-
-with torch.no_grad():
-    for i in tqdm(range(iters + 1), desc="处理批次"):
-        try:
-            # 计算当前批次索引
-            start_idx = i * batchsize
-            if i != iters:
-                end_idx = (i + 1) * batchsize
-            else:
-                end_idx = total_length
-
-            # 处理当前批次
-            emb_batch = process_batch_optimized((start_idx, end_idx), dataset, model)
-            emb_list.append(emb_batch)
-
-            # 定期清理（每10个批次）
-            if i % 10 == 0:
-                gc.collect()
-                torch.cuda.empty_cache()
-
-        except RuntimeError as e:
-            if "out of memory" in str(e):
-                print(f"批次 {i} 显存不足，尝试减小批次大小...")
-                # 可以在这里添加批次大小减半的逻辑
-                raise e
-            else:
-                raise e
-
-# 保存结果
-output_path = os.path.join(dataset_path, 'gene_embeddings.pickle')
-print(f"保存结果到: {output_path}")
-
-# 拼接所有结果
-import numpy as np
-
-emb_numpy = np.concatenate(emb_list, axis=0)
-
-with open(output_path, 'wb') as f:
-    pickle.dump(emb_numpy, f)
-
-print("处理完成！")
-
-
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Generate GeneCompass embeddings')
+    parser.add_argument('--dataset_path', type=str, required=True,
+                        help='Path to the preprocessed dataset')
+    parser.add_argument('--model_path', type=str, required=True,
+                        help='Path to the pretrained GeneCompass model')
+    parser.add_argument('--token_dict_path', type=str, required=True,
+                        help='Path to token dictionary')
+    parser.add_argument('--output_path', type=str, required=True,
+                        help='Path to save the embeddings')
+    parser.add_argument('--batch_size', type=int, default=128,
+                        help='Batch size for processing')
+    parser.add_argument('--gpu_ids', type=str, default="0",
+                        help='GPU IDs to use (e.g., "0,1,2,3")')
+    
+    args = parser.parse_args()
+    
+    generate_embeddings(
+        dataset_path=args.dataset_path,
+        model_path=args.model_path,
+        token_dict_path=args.token_dict_path,
+        output_path=args.output_path,
+        batch_size=args.batch_size,
+        gpu_ids=args.gpu_ids
+    )

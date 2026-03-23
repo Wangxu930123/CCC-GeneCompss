@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+"""
+Cell-Cell Interaction Analysis Based on GeneCompass
+
+This script performs cell-cell interaction analysis using GeneCompass fine-tuning
+for regression tasks, with gold standard labels derived from CellChat and CellPhoneDB.
+"""
+
 import os
 import pickle
 import pandas as pd
@@ -23,21 +31,21 @@ from sklearn.utils.class_weight import compute_class_weight
 
 warnings.filterwarnings('ignore')
 
-# 配置日志
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
 def compute_regression_metrics(pred):
-    """计算回归任务的评估指标"""
+    """Compute regression task evaluation metrics"""
     labels = pred.label_ids
     preds = pred.predictions
 
-    # 确保preds是1D数组
+    # Ensure preds is 1D array
     if len(preds.shape) > 1:
         preds = preds.flatten()
 
-    # 确保labels是1D数组
+    # Ensure labels is 1D array
     if len(labels.shape) > 1:
         labels = labels.flatten()
 
@@ -45,12 +53,12 @@ def compute_regression_metrics(pred):
     mae = mean_absolute_error(labels, preds)
     r2 = r2_score(labels, preds)
 
-    # 计算相对误差
+    # Compute relative error
     abs_errors = np.abs(labels - preds)
-    relative_errors = abs_errors / (np.abs(labels) + 1e-8)  # 避免除零
-    mape = np.mean(relative_errors) * 100  # 平均绝对百分比误差
+    relative_errors = abs_errors / (np.abs(labels) + 1e-8)  # Avoid division by zero
+    mape = np.mean(relative_errors) * 100  # Mean absolute percentage error
 
-    # 计算相关系数
+    # Compute correlation coefficient
     correlation = np.corrcoef(labels, preds)[0, 1] if len(labels) > 1 else 0
 
     return {
@@ -64,44 +72,44 @@ def compute_regression_metrics(pred):
 
 
 class RegressionCellInteractionDataset:
-    """回归任务细胞互作数据集构建类"""
+    """Regression task cell-cell interaction dataset construction class"""
 
     def __init__(self, embeddings_path, gold_standard_path, dataset_path, token_dict_path):
         """
-        初始化
+        Initialize
         """
         self.embeddings_path = embeddings_path
         self.gold_standard_path = gold_standard_path
         self.dataset_path = dataset_path
         self.token_dict_path = token_dict_path
 
-        # 加载数据
+        # Load data
         self.load_data()
 
     def load_data(self):
-        """加载所有必要数据"""
-        logger.info("加载基因嵌入数据...")
+        """Load all necessary data"""
+        logger.info("Loading gene embeddings data...")
         with open(self.embeddings_path, 'rb') as f:
             self.gene_embeddings = pickle.load(f)
 
-        logger.info("加载金标准标签...")
+        logger.info("Loading gold standard labels...")
         self.gold_standard = pd.read_csv(self.gold_standard_path)
 
-        logger.info("加载原始数据集...")
+        logger.info("Loading original dataset...")
         self.original_dataset = load_from_disk(self.dataset_path)
 
-        logger.info("加载token字典...")
+        logger.info("Loading token dictionary...")
         with open(self.token_dict_path, 'rb') as f:
             self.token_dictionary = pickle.load(f)
 
-        # 获取细胞类型信息
+        # Get cell type information
         if 'cell_type' in self.original_dataset.column_names:
             self.cell_types = self.original_dataset['cell_type']
         else:
             self.cell_types = [f"Cell_{i}" for i in range(len(self.original_dataset))]
-            logger.warning("未找到细胞类型信息，使用默认命名")
+            logger.warning("Cell type information not found, using default naming")
 
-        # 创建细胞类型到索引的映射
+        # Create cell type to index mapping
         self.cell_to_indices = {}
         for idx, cell_type in enumerate(self.cell_types):
             if cell_type not in self.cell_to_indices:
@@ -109,7 +117,7 @@ class RegressionCellInteractionDataset:
             self.cell_to_indices[cell_type].append(int(idx))
 
     def ensure_int_length(self, length_value):
-        """确保长度值是整数类型"""
+        """Ensure length value is integer type"""
         if isinstance(length_value, (list, np.ndarray)):
             if len(length_value) > 0:
                 return int(length_value[0])
@@ -121,22 +129,22 @@ class RegressionCellInteractionDataset:
             try:
                 return int(length_value)
             except (ValueError, TypeError):
-                logger.warning(f"无法将长度值 {length_value} 转换为整数，使用默认值0")
+                logger.warning(f"Cannot convert length value {length_value} to integer, using default value 0")
                 return 0
 
     def _build_cell_pair_sequence(self, dataset, sender_idx, receiver_idx, max_sequence_length):
-        """构建细胞对序列 - 修复空序列问题"""
+        """Build cell pair sequence - fix empty sequence problem"""
         try:
-            # 获取细胞数据
+            # Get cell data
             sender_data = dataset[sender_idx]
             receiver_data = dataset[receiver_idx]
 
-            # 获取特殊token
+            # Get special tokens
             cls_token = self.token_dictionary.get("<cls>", 1)
             sep_token = self.token_dictionary.get("<sep>", 2)
             pad_token = self.token_dictionary.get("<pad>", 0)
 
-            # 安全获取序列数据
+            # Safely get sequence data
             sender_input_ids = sender_data.get('input_ids', [])
             sender_values = sender_data.get('values', [])
             sender_length_raw = sender_data.get('length', 0)
@@ -145,25 +153,25 @@ class RegressionCellInteractionDataset:
             receiver_values = receiver_data.get('values', [])
             receiver_length_raw = receiver_data.get('length', 0)
 
-            # 确保序列数据有效
+            # Ensure sequence data is valid
             if (not sender_input_ids or not receiver_input_ids or
                     not sender_values or not receiver_values):
                 return None
 
-            # 确保长度值是整数
+            # Ensure length values are integers
             sender_length = self.ensure_int_length(sender_length_raw)
             receiver_length = self.ensure_int_length(receiver_length_raw)
 
-            # 检查长度有效性
+            # Check length validity
             if sender_length <= 0 or receiver_length <= 0:
                 return None
 
-            # 计算可用长度
+            # Calculate available length
             available_length = max_sequence_length - 3
             total_length = sender_length + receiver_length
 
             if total_length > available_length:
-                # 按比例分配长度
+                # Allocate length proportionally
                 sender_ratio = sender_length / total_length
                 sender_alloc = max(1, int(available_length * sender_ratio))
                 receiver_alloc = max(1, available_length - sender_alloc)
@@ -171,35 +179,35 @@ class RegressionCellInteractionDataset:
                 sender_alloc = sender_length
                 receiver_alloc = receiver_length
 
-            # 确保分配长度有效
+            # Ensure allocation length is valid
             sender_alloc = max(1, min(sender_alloc, len(sender_input_ids)))
             receiver_alloc = max(1, min(receiver_alloc, len(receiver_input_ids)))
 
-            # 截断序列
+            # Truncate sequences
             sender_input_ids_trunc = sender_input_ids[:sender_alloc]
             sender_values_trunc = sender_values[:sender_alloc]
             receiver_input_ids_trunc = receiver_input_ids[:receiver_alloc]
             receiver_values_trunc = receiver_values[:receiver_alloc]
 
-            # 检查截断后是否为空
+            # Check if truncated sequences are empty
             if not sender_input_ids_trunc or not receiver_input_ids_trunc:
                 return None
 
-            # 构建细胞对序列
+            # Build cell pair sequence
             pair_input_ids = [cls_token]
             pair_input_ids.extend(sender_input_ids_trunc)
             pair_input_ids.append(sep_token)
             pair_input_ids.extend(receiver_input_ids_trunc)
             pair_input_ids.append(sep_token)
 
-            # 构建值序列
+            # Build value sequence
             pair_values = [0.0]
             pair_values.extend(sender_values_trunc)
             pair_values.append(0.0)
             pair_values.extend(receiver_values_trunc)
             pair_values.append(0.0)
 
-            # 填充到固定长度
+            # Pad to fixed length
             current_length = len(pair_input_ids)
             if current_length < max_sequence_length:
                 pad_length = max_sequence_length - current_length
@@ -209,7 +217,7 @@ class RegressionCellInteractionDataset:
                 pair_input_ids = pair_input_ids[:max_sequence_length]
                 pair_values = pair_values[:max_sequence_length]
 
-            # 最终验证
+            # Final verification
             if len(pair_input_ids) != max_sequence_length or len(pair_values) != max_sequence_length:
                 return None
 
@@ -222,34 +230,34 @@ class RegressionCellInteractionDataset:
             }
 
         except Exception as e:
-            logger.error(f"构建细胞对序列失败: {str(e)}")
+            logger.error(f"Failed to build cell pair sequence: {str(e)}")
             return None
 
     def create_cell_pair_sequences(self, max_sequence_length=2048, balance_dataset=True):
         """
-        创建细胞对序列数据 - 回归任务版本
+        Create cell pair sequence data - regression task version
         """
-        logger.info("创建细胞对序列（回归任务）...")
+        logger.info("Creating cell pair sequences (regression task)...")
 
         sequences = []
         labels = []
         cell_pairs = []
 
-        # 查找连续分数列 - 回归任务使用连续分数
+        # Find continuous score column - regression task uses continuous scores
         score_column = None
         for col in ['Consensus_Score', 'Interaction_Score', 'Score', 'score', 'value']:
             if col in self.gold_standard.columns:
                 score_column = col
-                logger.info(f"使用连续分数列: {score_column}")
+                logger.info(f"Using continuous score column: {score_column}")
                 break
 
         if score_column is None:
-            logger.error("未找到连续分数列，请检查金标准文件格式")
-            # 尝试查看所有列
-            logger.error(f"可用列: {list(self.gold_standard.columns)}")
+            logger.error("Continuous score column not found, please check gold standard file format")
+            # Try to view all columns
+            logger.error(f"Available columns: {list(self.gold_standard.columns)}")
             return sequences, labels, cell_pairs
 
-        # 适配发送者和接收者列名
+        # Adapt sender and receiver column names
         sender_column = None
         receiver_column = None
 
@@ -264,25 +272,25 @@ class RegressionCellInteractionDataset:
                 break
 
         if sender_column is None or receiver_column is None:
-            logger.error("未找到发送者或接收者列")
-            logger.error(f"可用列: {list(self.gold_standard.columns)}")
+            logger.error("Sender or receiver column not found")
+            logger.error(f"Available columns: {list(self.gold_standard.columns)}")
             return sequences, labels, cell_pairs
 
-        logger.info(f"使用发送者列: {sender_column}, 接收者列: {receiver_column}")
+        logger.info(f"Using sender column: {sender_column}, receiver column: {receiver_column}")
 
-        # 过滤无效分数
+        # Filter invalid scores
         valid_data = self.gold_standard.dropna(subset=[score_column])
-        valid_data = valid_data[valid_data[score_column] >= 0]  # 确保分数非负
+        valid_data = valid_data[valid_data[score_column] >= 0]  # Ensure score is non-negative
 
-        logger.info(f"有效数据数量: {len(valid_data)}")
-        logger.info(f"分数统计 - 最小值: {valid_data[score_column].min():.4f}, "
-                    f"最大值: {valid_data[score_column].max():.4f}, "
-                    f"平均值: {valid_data[score_column].mean():.4f}")
+        logger.info(f"Valid data count: {len(valid_data)}")
+        logger.info(f"Score statistics - min: {valid_data[score_column].min():.4f}, "
+                    f"max: {valid_data[score_column].max():.4f}, "
+                    f"mean: {valid_data[score_column].mean():.4f}")
 
         valid_sequences_count = 0
         invalid_sequences_count = 0
 
-        for _, row in tqdm(valid_data.iterrows(), total=len(valid_data), desc="处理细胞对"):
+        for _, row in tqdm(valid_data.iterrows(), total=len(valid_data), desc="Processing cell pairs"):
             sender_type = row[sender_column]
             receiver_type = row[receiver_column]
             score = float(row[score_column])
@@ -291,7 +299,7 @@ class RegressionCellInteractionDataset:
                 sender_idx = int(np.random.choice(self.cell_to_indices[sender_type]))
                 receiver_idx = int(np.random.choice(self.cell_to_indices[receiver_type]))
 
-                # 构建序列
+                # Build sequence
                 sequence = self._build_cell_pair_sequence(
                     self.original_dataset, sender_idx, receiver_idx, max_sequence_length
                 )
@@ -306,21 +314,21 @@ class RegressionCellInteractionDataset:
                 invalid_sequences_count += 1
 
         if invalid_sequences_count > 0:
-            logger.warning(f"跳过 {invalid_sequences_count} 个无效序列")
+            logger.warning(f"Skipped {invalid_sequences_count} invalid sequences")
 
-        logger.info(f"创建了 {len(sequences)} 个有效的细胞对序列")
-        logger.info(f"分数范围: {min(labels):.4f} - {max(labels):.4f}, 平均值: {np.mean(labels):.4f}")
+        logger.info(f"Created {len(sequences)} valid cell pair sequences")
+        logger.info(f"Score range: {min(labels):.4f} - {max(labels):.4f}, mean: {np.mean(labels):.4f}")
         return sequences, labels, cell_pairs
 
     def create_huggingface_dataset(self, sequences, labels, test_size=0.2, validation_size=0.1):
-        """创建HuggingFace数据集"""
-        logger.info("创建HuggingFace数据集（回归任务）...")
+        """Create HuggingFace dataset"""
+        logger.info("Creating HuggingFace dataset (regression task)...")
 
         if len(sequences) == 0:
-            logger.error("没有有效的序列数据")
+            logger.error("No valid sequence data")
             return None, None, None
 
-        # 添加物种信息（默认为0）
+        # Add species information (default to 0)
         species = [0] * len(sequences)
 
         dataset_dict = {
@@ -328,18 +336,18 @@ class RegressionCellInteractionDataset:
             'values': [seq['values'] for seq in sequences],
             'length': [seq['length'] for seq in sequences],
             'species': species,
-            'label': labels  # 回归任务使用连续分数作为标签
+            'label': labels  # Regression task uses continuous scores as labels
         }
 
-        # 创建数据集
+        # Create dataset
         dataset = Dataset.from_dict(dataset_dict)
 
-        # 划分数据集
+        # Split dataset
         if len(dataset) > 1:
             train_val_test = dataset.train_test_split(test_size=test_size + validation_size, seed=42)
 
             if len(train_val_test['test']) > 1:
-                # 计算验证集和测试集的比例
+                # Calculate validation and test set proportions
                 val_ratio = validation_size / (test_size + validation_size)
                 val_test = train_val_test['test'].train_test_split(
                     test_size=val_ratio, seed=42
@@ -352,66 +360,66 @@ class RegressionCellInteractionDataset:
                 val_dataset = train_val_test['test']
                 test_dataset = train_val_test['test']
         else:
-            logger.warning("数据量过少，使用全部数据作为训练集")
+            logger.warning("Dataset too small, using all data as training set")
             train_dataset = dataset
             val_dataset = dataset
             test_dataset = dataset
 
-        logger.info(f"训练集大小: {len(train_dataset)}")
-        logger.info(f"验证集大小: {len(val_dataset)}")
-        logger.info(f"测试集大小: {len(test_dataset)}")
-        logger.info(f"训练集分数范围: {min(train_dataset['label']):.4f} - {max(train_dataset['label']):.4f}")
+        logger.info(f"Training set size: {len(train_dataset)}")
+        logger.info(f"Validation set size: {len(val_dataset)}")
+        logger.info(f"Test set size: {len(test_dataset)}")
+        logger.info(f"Training set score range: {min(train_dataset['label']):.4f} - {max(train_dataset['label']):.4f}")
 
         return train_dataset, val_dataset, test_dataset
 
 
 def setup_multigpu_training():
-    """设置多GPU训练环境"""
+    """Setup multi-GPU training environment"""
     if torch.cuda.device_count() > 1:
-        logger.info(f"检测到 {torch.cuda.device_count()} 个GPU可用")
+        logger.info(f"Detected {torch.cuda.device_count()} GPUs available")
 
         if not dist.is_initialized():
             if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
                 rank = int(os.environ['RANK'])
                 world_size = int(os.environ['WORLD_SIZE'])
                 dist.init_process_group(backend='nccl', init_method='env://')
-                logger.info(f"初始化分布式训练: rank={rank}, world_size={world_size}")
+                logger.info(f"Initialized distributed training: rank={rank}, world_size={world_size}")
                 return True
             else:
-                logger.info("单机多GPU模式，但未初始化分布式训练")
+                logger.info("Single machine multi-GPU mode, but distributed training not initialized")
                 return False
         return True
     else:
-        logger.info("单GPU训练模式")
+        logger.info("Single GPU training mode")
         return False
 
 
 def fine_tune_regression_model(config):
     """
-    微调细胞互作回归模型
+    Fine-tune cell interaction regression model
     """
-    logger.info("开始细胞互作关系回归模型微调...")
+    logger.info("Starting cell-cell interaction regression model fine-tuning...")
 
-    # 设置多GPU训练
+    # Setup multi-GPU training
     is_multigpu = setup_multigpu_training()
 
-    # 获取当前进程的rank
+    # Get current process rank
     if is_multigpu and dist.is_initialized():
         rank = dist.get_rank()
         world_size = dist.get_world_size()
-        logger.info(f"当前进程rank: {rank}, 总进程数: {world_size}")
+        logger.info(f"Current process rank: {rank}, total processes: {world_size}")
     else:
         rank = 0
         world_size = 1
 
-    # 只有主进程创建输出目录
+    # Only main process creates output directory
     if rank == 0:
         os.makedirs(config['output_dir'], exist_ok=True)
-        logger.info(f"创建输出目录: {config['output_dir']}")
+        logger.info(f"Created output directory: {config['output_dir']}")
 
-    # 1. 创建数据集
+    # 1. Create dataset
     if rank == 0:
-        logger.info("主进程创建数据集...")
+        logger.info("Main process creating dataset...")
         try:
             dataset_builder = RegressionCellInteractionDataset(
                 embeddings_path=config['embeddings_path'],
@@ -420,57 +428,57 @@ def fine_tune_regression_model(config):
                 token_dict_path=config['token_dict_path']
             )
 
-            # 创建细胞对序列
+            # Create cell pair sequences
             sequences, labels, cell_pairs = dataset_builder.create_cell_pair_sequences(
                 max_sequence_length=config.get('max_sequence_length', 2048),
-                balance_dataset=config.get('balance_dataset', False)  # 回归任务通常不需要平衡
+                balance_dataset=config.get('balance_dataset', False)  # Regression task usually doesn't need balancing
             )
 
-            # 检查数据集是否有效
+            # Check if dataset is valid
             if len(sequences) == 0:
-                logger.error("创建的数据集为空，无法进行训练")
+                logger.error("Created dataset is empty, cannot train")
                 return None, None, None
 
-            # 创建HuggingFace数据集
+            # Create HuggingFace dataset
             train_dataset, val_dataset, test_dataset = dataset_builder.create_huggingface_dataset(
                 sequences, labels,
                 test_size=config.get('test_size', 0.2),
                 validation_size=config.get('validation_size', 0.1)
             )
 
-            # 保存数据集
+            # Save dataset
             dataset_save_path = os.path.join(config['output_dir'], "temp_dataset")
             os.makedirs(dataset_save_path, exist_ok=True)
 
             train_dataset.save_to_disk(os.path.join(dataset_save_path, "train"))
             val_dataset.save_to_disk(os.path.join(dataset_save_path, "val"))
             test_dataset.save_to_disk(os.path.join(dataset_save_path, "test"))
-            logger.info("数据集已保存")
+            logger.info("Dataset saved")
         except Exception as e:
-            logger.error(f"创建数据集失败: {str(e)}")
+            logger.error(f"Failed to create dataset: {str(e)}")
             return None, None, None
     else:
         dataset_save_path = os.path.join(config['output_dir'], "temp_dataset")
-        logger.info(f"进程 {rank} 等待数据集...")
+        logger.info(f"Process {rank} waiting for dataset...")
 
-    # 同步所有进程
+    # Synchronize all processes
     if is_multigpu and dist.is_initialized():
         dist.barrier()
 
-    # 所有进程加载数据集
+    # All processes load dataset
     if rank != 0 or (rank == 0 and 'train_dataset' not in locals()):
-        logger.info(f"进程 {rank} 加载数据集...")
+        logger.info(f"Process {rank} loading dataset...")
         try:
             train_dataset = load_from_disk(os.path.join(dataset_save_path, "train"))
             val_dataset = load_from_disk(os.path.join(dataset_save_path, "val"))
             test_dataset = load_from_disk(os.path.join(dataset_save_path, "test"))
-            logger.info(f"进程 {rank} 数据集加载完成")
+            logger.info(f"Process {rank} dataset loading complete")
         except Exception as e:
-            logger.error(f"进程 {rank} 数据集加载失败: {str(e)}")
+            logger.error(f"Process {rank} dataset loading failed: {str(e)}")
             return None, None, None
 
-    # 2. 加载先验知识
-    logger.info("加载先验知识...")
+    # 2. Load prior knowledge
+    logger.info("Loading prior knowledge...")
     knowledges = {}
     try:
         out = load_prior_embedding(token_dictionary_or_path=config['token_dict_path'])
@@ -479,33 +487,33 @@ def fine_tune_regression_model(config):
         knowledges['gene_family'] = out[2] if len(out) > 2 else None
         knowledges['peca_grn'] = out[3] if len(out) > 3 else None
         knowledges['homologous_gene_human2mouse'] = out[4] if len(out) > 4 else None
-        logger.info("先验知识加载成功")
+        logger.info("Prior knowledge loaded successfully")
     except Exception as e:
-        logger.warning(f"加载先验知识失败: {str(e)}")
+        logger.warning(f"Failed to load prior knowledge: {str(e)}")
         knowledges = {
             'promoter': None, 'co_exp': None, 'gene_family': None,
             'peca_grn': None, 'homologous_gene_human2mouse': None
         }
 
-    # 3. 加载预训练模型 - 回归任务使用num_labels=1
-    logger.info("加载预训练模型（回归任务）...")
+    # 3. Load pre-trained model - regression task uses num_labels=1
+    logger.info("Loading pre-trained model (regression task)...")
     try:
-        # 回归任务，设置num_labels=1
+        # Regression task, set num_labels=1
         model = BertForSequenceClassification.from_pretrained(
             config['model_path'],
-            num_labels=1,  # 回归任务
+            num_labels=1,  # Regression task
             output_attentions=False,
             output_hidden_states=False,
             knowledges=knowledges,
         )
-        logger.info("预训练模型加载成功（回归任务）")
+        logger.info("Pre-trained model loaded successfully (regression task)")
     except Exception as e:
-        logger.error(f"加载预训练模型失败: {str(e)}")
+        logger.error(f"Failed to load pre-trained model: {str(e)}")
         return None, None, None
 
-    # 4. 冻结部分层（可选）
+    # 4. Freeze some layers (optional)
     if config.get('freeze_layers', 0) > 0:
-        logger.info(f"冻结前 {config['freeze_layers']} 层")
+        logger.info(f"Freezing first {config['freeze_layers']} layers")
         freeze_layers = config['freeze_layers']
         if hasattr(model, 'bert') and hasattr(model.bert, 'encoder'):
             modules_to_freeze = model.bert.encoder.layer[:freeze_layers]
@@ -513,10 +521,10 @@ def fine_tune_regression_model(config):
                 for param in module.parameters():
                     param.requires_grad = False
 
-    # 5. 设置训练参数 - 回归任务
+    # 5. Setup training parameters - regression task
     per_device_batch_size = config.get('batch_size', 4)
 
-    # 根据数据集大小调整批次大小
+    # Adjust batch size based on dataset size
     if len(train_dataset) > 100:
         per_device_batch_size = min(per_device_batch_size, 8)
     else:
@@ -524,12 +532,12 @@ def fine_tune_regression_model(config):
 
     if is_multigpu and world_size > 1:
         effective_batch_size = per_device_batch_size * world_size
-        logger.info(f"多GPU训练: 每设备批次大小={per_device_batch_size}, 有效批次大小={effective_batch_size}")
+        logger.info(f"Multi-GPU training: per-device batch size={per_device_batch_size}, effective batch size={effective_batch_size}")
     else:
         effective_batch_size = per_device_batch_size
-        logger.info(f"单GPU训练: 批次大小={effective_batch_size}")
+        logger.info(f"Single GPU training: batch size={effective_batch_size}")
 
-    # 调整训练轮数基于数据集大小
+    # Adjust training epochs based on dataset size
     num_epochs = config.get('num_epochs', 40)
     if len(train_dataset) > 100:
         num_epochs = min(num_epochs, 30)
@@ -557,10 +565,10 @@ def fine_tune_regression_model(config):
         local_rank=rank,
         ddp_find_unused_parameters=False,
         report_to=[],
-        remove_unused_columns=True  # 关键修复：自动移除不使用的列，防止length参数错误
+        remove_unused_columns=True  # Key fix: automatically remove unused columns to prevent length parameter errors
     )
 
-    # 6. 创建训练器 - 使用回归评估指标
+    # 6. Create trainer - use regression evaluation metrics
     try:
         trainer = Trainer(
             model=model,
@@ -571,35 +579,35 @@ def fine_tune_regression_model(config):
             compute_metrics=compute_regression_metrics
         )
     except Exception as e:
-        logger.error(f"创建训练器失败: {str(e)}")
+        logger.error(f"Failed to create trainer: {str(e)}")
         return None, None, None
 
-    # 7. 开始训练
-    logger.info("开始回归模型训练...")
+    # 7. Start training
+    logger.info("Starting regression model training...")
     try:
         train_result = trainer.train()
-        logger.info("回归模型训练完成")
+        logger.info("Regression model training complete")
     except Exception as e:
-        logger.error(f"训练过程中出现错误: {str(e)}")
+        logger.error(f"Error during training: {str(e)}")
         return None, None, None
 
-    # 8. 保存模型和评估结果
+    # 8. Save model and evaluation results
     if rank == 0:
-        logger.info("保存回归模型和评估结果...")
+        logger.info("Saving regression model and evaluation results...")
 
         try:
-            # 在测试集上评估
+            # Evaluate on test set
             test_predictions = trainer.predict(test_dataset)
             val_predictions = trainer.predict(val_dataset)
 
-            # 保存评估指标
+            # Save evaluation metrics
             with open(os.path.join(config['output_dir'], "test_metrics.json"), 'w') as f:
                 json.dump(test_predictions.metrics, f, indent=2)
 
-            # 保存模型
+            # Save model
             trainer.save_model(config['output_dir'])
 
-            # 保存训练历史
+            # Save training history
             training_history = {
                 'train_loss': [log for log in trainer.state.log_history if 'loss' in log],
                 'eval_metrics': [log for log in trainer.state.log_history if 'eval_loss' in log]
@@ -607,27 +615,27 @@ def fine_tune_regression_model(config):
             with open(os.path.join(config['output_dir'], "training_history.pkl"), 'wb') as f:
                 pickle.dump(training_history, f)
 
-            # 保存预测结果
+            # Save prediction results
             predictions_df = pd.DataFrame({
                 'true_labels': test_predictions.label_ids.flatten(),
                 'predicted_scores': test_predictions.predictions.flatten()
             })
             predictions_df.to_csv(os.path.join(config['output_dir'], "test_predictions.csv"), index=False)
 
-            # 清理临时数据集
+            # Clean up temporary dataset
             if os.path.exists(dataset_save_path):
                 import shutil
                 shutil.rmtree(dataset_save_path)
-                logger.info("清理临时数据集")
+                logger.info("Cleaned up temporary dataset")
 
-            logger.info(f"回归模型训练完成！模型和结果已保存到: {config['output_dir']}")
+            logger.info(f"Regression model training complete! Model and results saved to: {config['output_dir']}")
         except Exception as e:
-            logger.error(f"保存结果时出现错误: {str(e)}")
+            logger.error(f"Error saving results: {str(e)}")
             test_predictions = None
     else:
         test_predictions = None
 
-    # 同步所有进程
+    # Synchronize all processes
     if is_multigpu and dist.is_initialized():
         dist.barrier()
 
@@ -635,11 +643,11 @@ def fine_tune_regression_model(config):
 
 
 class RegressionCellInteractionPredictor:
-    """回归任务细胞互作预测器"""
+    """Regression task cell-cell interaction predictor"""
 
     def __init__(self, model_path, token_dict_path):
         """
-        初始化预测器
+        Initialize predictor
         """
         self.model_path = model_path
         self.token_dict_path = token_dict_path
@@ -647,18 +655,18 @@ class RegressionCellInteractionPredictor:
         self.token_dictionary = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # 加载模型和token字典
+        # Load model and token dictionary
         self.load_model_and_tokenizer()
 
     def load_model_and_tokenizer(self):
-        """加载模型和token字典"""
-        logger.info("加载回归模型和token字典...")
+        """Load model and token dictionary"""
+        logger.info("Loading regression model and token dictionary...")
 
-        # 加载token字典
+        # Load token dictionary
         with open(self.token_dict_path, 'rb') as f:
             self.token_dictionary = pickle.load(f)
 
-        # 加载先验知识
+        # Load prior knowledge
         knowledges = {}
         try:
             out = load_prior_embedding(token_dictionary_or_path=self.token_dict_path)
@@ -668,29 +676,29 @@ class RegressionCellInteractionPredictor:
             knowledges['peca_grn'] = out[3] if len(out) > 3 else None
             knowledges['homologous_gene_human2mouse'] = out[4] if len(out) > 4 else None
         except Exception as e:
-            logger.warning(f"加载先验知识失败: {str(e)}")
+            logger.warning(f"Failed to load prior knowledge: {str(e)}")
             knowledges = {
                 'promoter': None, 'co_exp': None, 'gene_family': None,
                 'peca_grn': None, 'homologous_gene_human2mouse': None
             }
 
-        # 加载模型 - 回归任务
+        # Load model - regression task
         try:
             self.model = BertForSequenceClassification.from_pretrained(
                 self.model_path,
                 knowledges=knowledges,
             )
-            logger.info("回归模型加载成功")
+            logger.info("Regression model loaded successfully")
         except Exception as e:
-            logger.error(f"回归模型加载失败: {str(e)}")
+            logger.error(f"Failed to load regression model: {str(e)}")
             raise
 
         self.model.eval()
         self.model = self.model.to(self.device)
-        logger.info("回归模型加载完成")
+        logger.info("Regression model loading complete")
 
     def _create_cell_index_mapping(self, dataset):
-        """创建细胞类型到索引的映射"""
+        """Create cell type to index mapping"""
         cell_to_indices = {}
         if 'cell_type' in dataset.column_names:
             cell_types = dataset['cell_type']
@@ -703,30 +711,30 @@ class RegressionCellInteractionPredictor:
         return cell_to_indices
 
     def _build_cell_pair_sequence(self, dataset, sender, receiver, max_sequence_length):
-        """构建细胞对序列 - 完整实现"""
+        """Build cell pair sequence - complete implementation"""
         try:
-            # 创建细胞类型到索引的映射
+            # Create cell type to index mapping
             cell_to_indices = self._create_cell_index_mapping(dataset)
 
-            # 检查细胞类型是否存在
+            # Check if cell types exist
             if sender not in cell_to_indices or receiver not in cell_to_indices:
-                logger.warning(f"细胞类型 {sender} 或 {receiver} 不在数据集中")
+                logger.warning(f"Cell type {sender} or {receiver} not in dataset")
                 return None
 
-            # 随机选择索引
+            # Randomly select indices
             sender_idx = int(np.random.choice(cell_to_indices[sender]))
             receiver_idx = int(np.random.choice(cell_to_indices[receiver]))
 
-            # 获取细胞数据
+            # Get cell data
             sender_data = dataset[sender_idx]
             receiver_data = dataset[receiver_idx]
 
-            # 获取特殊token
+            # Get special tokens
             cls_token = self.token_dictionary.get("<cls>", 1)
             sep_token = self.token_dictionary.get("<sep>", 2)
             pad_token = self.token_dictionary.get("<pad>", 0)
 
-            # 安全获取序列数据
+            # Safely get sequence data
             sender_input_ids = sender_data.get('input_ids', [])
             sender_values = sender_data.get('values', [])
             sender_length = len(sender_input_ids)
@@ -735,17 +743,17 @@ class RegressionCellInteractionPredictor:
             receiver_values = receiver_data.get('values', [])
             receiver_length = len(receiver_input_ids)
 
-            # 确保序列数据有效
+            # Ensure sequence data is valid
             if (not sender_input_ids or not receiver_input_ids or
                     not sender_values or not receiver_values):
                 return None
 
-            # 计算可用长度
+            # Calculate available length
             available_length = max_sequence_length - 3
             total_length = sender_length + receiver_length
 
             if total_length > available_length:
-                # 按比例分配长度
+                # Allocate length proportionally
                 sender_ratio = sender_length / total_length
                 sender_alloc = max(1, int(available_length * sender_ratio))
                 receiver_alloc = max(1, available_length - sender_alloc)
@@ -753,35 +761,35 @@ class RegressionCellInteractionPredictor:
                 sender_alloc = sender_length
                 receiver_alloc = receiver_length
 
-            # 确保分配长度有效
+            # Ensure allocation length is valid
             sender_alloc = max(1, min(sender_alloc, len(sender_input_ids)))
             receiver_alloc = max(1, min(receiver_alloc, len(receiver_input_ids)))
 
-            # 截断序列
+            # Truncate sequences
             sender_input_ids_trunc = sender_input_ids[:sender_alloc]
             sender_values_trunc = sender_values[:sender_alloc]
             receiver_input_ids_trunc = receiver_input_ids[:receiver_alloc]
             receiver_values_trunc = receiver_values[:receiver_alloc]
 
-            # 检查截断后是否为空
+            # Check if truncated sequences are empty
             if not sender_input_ids_trunc or not receiver_input_ids_trunc:
                 return None
 
-            # 构建细胞对序列
+            # Build cell pair sequence
             pair_input_ids = [cls_token]
             pair_input_ids.extend(sender_input_ids_trunc)
             pair_input_ids.append(sep_token)
             pair_input_ids.extend(receiver_input_ids_trunc)
             pair_input_ids.append(sep_token)
 
-            # 构建值序列
+            # Build value sequence
             pair_values = [0.0]
             pair_values.extend(sender_values_trunc)
             pair_values.append(0.0)
             pair_values.extend(receiver_values_trunc)
             pair_values.append(0.0)
 
-            # 填充到固定长度
+            # Pad to fixed length
             current_length = len(pair_input_ids)
             if current_length < max_sequence_length:
                 pad_length = max_sequence_length - current_length
@@ -791,7 +799,7 @@ class RegressionCellInteractionPredictor:
                 pair_input_ids = pair_input_ids[:max_sequence_length]
                 pair_values = pair_values[:max_sequence_length]
 
-            # 最终验证
+            # Final verification
             if len(pair_input_ids) != max_sequence_length or len(pair_values) != max_sequence_length:
                 return None
 
@@ -804,79 +812,79 @@ class RegressionCellInteractionPredictor:
             }
 
         except Exception as e:
-            logger.error(f"构建细胞对序列失败: {str(e)}")
+            logger.error(f"Failed to build cell pair sequence: {str(e)}")
             return None
 
     def predict_interaction_scores(self, dataset, cell_types, max_sequence_length=2048, batch_size=8):
         """
-        预测细胞互作分数
+        Predict cell interaction scores
         """
-        logger.info("开始预测细胞互作分数（回归任务）...")
+        logger.info("Starting to predict cell interaction scores (regression task)...")
 
-        # 生成所有可能的细胞对
+        # Generate all possible cell pairs
         cell_pairs = []
         for i, sender in enumerate(cell_types):
             for j, receiver in enumerate(cell_types):
-                if sender != receiver:  # 排除自互作
+                if sender != receiver:  # Exclude self-interactions
                     cell_pairs.append((sender, receiver))
 
-        logger.info(f"需要预测 {len(cell_pairs)} 个细胞对")
+        logger.info(f"Need to predict {len(cell_pairs)} cell pairs")
 
         predictions = []
 
         with torch.no_grad():
-            for i in tqdm(range(0, len(cell_pairs), batch_size), desc="预测"):
+            for i in tqdm(range(0, len(cell_pairs), batch_size), desc="Predicting"):
                 batch_predictions = self._predict_batch(
                     dataset, cell_pairs[i:i + batch_size], max_sequence_length
                 )
                 predictions.extend(batch_predictions)
 
-        logger.info(f"完成 {len(predictions)} 个预测")
+        logger.info(f"Completed {len(predictions)} predictions")
         return predictions
 
     def _predict_batch(self, dataset, cell_pairs, max_sequence_length):
-        """批量预测"""
+        """Batch prediction"""
         batch_predictions = []
 
         for sender, receiver in cell_pairs:
             try:
-                # 构建序列
+                # Build sequence
                 sequence = self._build_cell_pair_sequence(dataset, sender, receiver, max_sequence_length)
                 if sequence is None:
                     continue
 
-                # 准备输入
+                # Prepare input
                 input_ids = torch.tensor([sequence['input_ids']]).long().to(self.device)
                 values = torch.tensor([sequence['values']]).float().to(self.device)
 
-                # 预测 - 回归任务直接输出分数
+                # Predict - regression task directly outputs score
                 outputs = self.model(input_ids=input_ids, values=values)
-                score = outputs.logits.item()  # 回归任务直接取标量值
+                score = outputs.logits.item()  # Regression task directly takes scalar value
 
                 batch_predictions.append({
                     'sender': sender,
                     'receiver': receiver,
                     'predicted_score': score,
-                    'confidence': 1.0  # 回归任务没有置信度，设为1.0
+                    'confidence': 1.0  # Regression task has no confidence, set to 1.0
                 })
             except Exception as e:
-                logger.warning(f"预测细胞对 {sender}-{receiver} 失败: {str(e)}")
+                logger.warning(f"Failed to predict cell pair {sender}-{receiver}: {str(e)}")
                 continue
 
         return batch_predictions
 
     def create_interaction_matrix(self, predictions, cell_types):
         """
-        创建细胞互作评分矩阵
+        Create cell interaction scoring matrix
         """
-        logger.info("创建细胞互作评分矩阵...")
+        logger.info("Creating cell interaction scoring matrix...")
 
-        # 创建空的DataFrame
+        # Create empty DataFrame
         interaction_matrix = pd.DataFrame(
             0.0, index=cell_types, columns=cell_types
         )
 
-        # 填充预测结果
+        # Fill prediction results
         for pred in predictions:
             sender = pred['sender']
             receiver = pred['receiver']
@@ -887,33 +895,33 @@ class RegressionCellInteractionPredictor:
         return interaction_matrix
 
     def save_results(self, interaction_matrix, predictions, output_dir):
-        """保存预测结果"""
+        """Save prediction results"""
         os.makedirs(output_dir, exist_ok=True)
 
-        # 保存互作矩阵
+        # Save interaction matrix
         matrix_path = os.path.join(output_dir, 'interaction_score_matrix.csv')
         interaction_matrix.to_csv(matrix_path)
-        logger.info(f"互作评分矩阵已保存: {matrix_path}")
+        logger.info(f"Interaction scoring matrix saved: {matrix_path}")
 
-        # 保存详细预测结果
+        # Save detailed prediction results
         predictions_df = pd.DataFrame(predictions)
         predictions_path = os.path.join(output_dir, 'detailed_predictions.csv')
         predictions_df.to_csv(predictions_path, index=False)
-        logger.info(f"详细预测结果已保存: {predictions_path}")
+        logger.info(f"Detailed prediction results saved: {predictions_path}")
 
-        # 生成统计分析
+        # Generate statistical analysis
         stats = self._generate_statistics(interaction_matrix, predictions)
         stats_path = os.path.join(output_dir, 'statistical_analysis.json')
         with open(stats_path, 'w') as f:
             json.dump(stats, f, indent=2)
-        logger.info(f"统计分析已保存: {stats_path}")
+        logger.info(f"Statistical analysis saved: {stats_path}")
 
-        # 生成可视化
+        # Generate visualizations
         self._generate_visualizations(interaction_matrix, output_dir)
-        logger.info("可视化结果已生成")
+        logger.info("Visualization results generated")
 
     def _generate_statistics(self, interaction_matrix, predictions):
-        """生成统计分析"""
+        """Generate statistical analysis"""
         scores = [pred['predicted_score'] for pred in predictions]
 
         stats = {
@@ -932,8 +940,8 @@ class RegressionCellInteractionPredictor:
             },
             "top_interactions": sorted(predictions, key=lambda x: x['predicted_score'], reverse=True)[:20]
         }
-        if not predictions:  # 检查predictions是否为空
-            logger.warning("预测结果为空，返回默认统计信息")
+        if not predictions:  # Check if predictions is empty
+            logger.warning("Prediction results are empty, returning default statistical information")
             return {
                 "basic_statistics": {
                     "total_cell_types": interaction_matrix.shape[0],
@@ -954,11 +962,11 @@ class RegressionCellInteractionPredictor:
         return stats
 
     def _generate_visualizations(self, interaction_matrix, output_dir):
-        """生成可视化结果"""
+        """Generate visualization results"""
         try:
             plt.style.use('default')
 
-            # 1. 互作评分矩阵热图
+            # 1. Interaction scoring matrix heatmap
             plt.figure(figsize=(12, 10))
             sns.heatmap(interaction_matrix, annot=True, fmt='.3f', cmap='Reds',
                         cbar_kws={'label': 'Interaction Score'})
@@ -968,10 +976,10 @@ class RegressionCellInteractionPredictor:
             plt.savefig(heatmap_path, dpi=300, bbox_inches='tight')
             plt.close()
 
-            # 2. 评分分布直方图
+            # 2. Score distribution histogram
             plt.figure(figsize=(10, 6))
             scores = interaction_matrix.values.flatten()
-            scores = scores[scores > 0]  # 只显示正分数
+            scores = scores[scores > 0]  # Only show positive scores
             plt.hist(scores, bins=50, alpha=0.7, color='skyblue', edgecolor='black')
             plt.xlabel('Interaction Score')
             plt.ylabel('Frequency')
@@ -981,22 +989,22 @@ class RegressionCellInteractionPredictor:
             plt.savefig(hist_path, dpi=300, bbox_inches='tight')
             plt.close()
 
-            logger.info("可视化结果已生成")
+            logger.info("Visualization results generated")
         except Exception as e:
-            logger.warning(f"生成可视化结果失败: {str(e)}")
+            logger.warning(f"Failed to generate visualization results: {str(e)}")
 
 
-# 主函数
+# Main function
 def main():
-    """主执行函数"""
-    # 配置参数 - 回归任务版本
+    """Main execution function"""
+    # Configuration parameters - regression task version
     config = {
-        'embeddings_path': '/mnt/data_sdb/wangx/data/SingleCell/gene_embeddings/TabulaSapiens/tabula_sapiens_liver/gene_embeddings_liver.pickle',
-        'gold_standard_path': '/mnt/data_sdb/wangx/GeneCompass/cell_interaction_gold_standard/liver/complete_labeled_interactions.csv',
-        'dataset_path': '/mnt/data_sdb/wangx/data/SingleCell/normalized_data/TabulaSapiens/tabula_sapiens_liver/tabula_sapiens_liver/',
+        'embeddings_path': './embeddings/gene_embeddings.pickle',
+        'gold_standard_path': './gold_standard/complete_labeled_interactions.csv',
+        'dataset_path': './normalized_data/dataset',
         'token_dict_path': './prior_knowledge/human_mouse_tokens.pickle',
         'model_path': './pretrained_models/GeneCompass_Base',
-        'output_dir': '/mnt/data_sdb/wangx/GeneCompass/cell_interaction_outputs/results_20251030/',
+        'output_dir': './outputs/interaction_analysis',
         'max_sequence_length': 2048,
         'batch_size': 2,
         'num_epochs': 30,
@@ -1006,37 +1014,37 @@ def main():
         'test_size': 0.2,
         'validation_size': 0.1,
         'balance_dataset': False,
-        'metric_for_best_model': 'rmse'  # 回归任务使用RMSE作为最佳模型指标
+        'metric_for_best_model': 'rmse'  # Regression task uses RMSE as best model metric
     }
 
-    # 阶段1: 微调回归模型
-    logger.info("=== 阶段1: 细胞互作回归模型微调 ===")
+    # Phase 1: Fine-tune regression model
+    logger.info("=== Phase 1: Cell-Cell Interaction Regression Model Fine-Tuning ===")
     trainer, test_predictions, val_predictions = fine_tune_regression_model(config)
 
-    # 打印评估结果
+    # Print evaluation results
     if trainer is not None and test_predictions is not None:
-        logger.info("=== 回归模型评估结果 ===")
+        logger.info("=== Regression Model Evaluation Results ===")
         for metric, value in test_predictions.metrics.items():
             logger.info(f"{metric}: {value:.4f}")
 
-    # 阶段2: 使用微调后的回归模型进行预测
+    # Phase 2: Use fine-tuned regression model for prediction
     if trainer is not None:
-        logger.info("=== 阶段2: 细胞互作评分预测 ===")
+        logger.info("=== Phase 2: Cell-Cell Interaction Scoring Prediction ===")
 
-        # 创建预测器并进行预测
+        # Create predictor and perform prediction
         predictor = RegressionCellInteractionPredictor(
             model_path=config['output_dir'],
             token_dict_path=config['token_dict_path']
         )
 
-        # 加载数据集以获取细胞类型信息
+        # Load dataset to get cell type information
         dataset = load_from_disk(config['dataset_path'])
         if 'cell_type' in dataset.column_names:
             cell_types = sorted(list(set(dataset['cell_type'])))
         else:
             cell_types = [f"Cell_{i}" for i in range(len(dataset))]
 
-        # 进行预测
+        # Perform prediction
         predictions = predictor.predict_interaction_scores(
             dataset=dataset,
             cell_types=cell_types,
@@ -1044,17 +1052,17 @@ def main():
             batch_size=config['batch_size']
         )
 
-        # 创建互作评分矩阵
+        # Create interaction scoring matrix
         interaction_matrix = predictor.create_interaction_matrix(predictions, cell_types)
 
-        # 保存结果
+        # Save results
         output_dir = os.path.join(config['output_dir'], 'predictions')
         predictor.save_results(interaction_matrix, predictions, output_dir)
 
-        logger.info("=== 回归预测完成 ===")
-        logger.info(f"结果保存在: {output_dir}")
+        logger.info("=== Regression Prediction Complete ===")
+        logger.info(f"Results saved in: {output_dir}")
 
-    logger.info("=== 处理完成 ===")
+    logger.info("=== Processing Complete ===")
 
 
 if __name__ == "__main__":
