@@ -54,7 +54,10 @@ class TruncationStrategy(ExplicitEnum):
     DO_NOT_TRUNCATE = "do_not_truncate"
 
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 0a00b04 (Initial commit: CCC-GeneCompass v3 - gene compass BERT model for cell-cell communication analysis)
 class PaddingStrategy(ExplicitEnum):
     """
     Possible values for the ``padding`` argument in :meth:`PreTrainedTokenizerBase.__call__`. Useful for tab-completion
@@ -66,7 +69,10 @@ class PaddingStrategy(ExplicitEnum):
     DO_NOT_PAD = "do_not_pad"
 
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 0a00b04 (Initial commit: CCC-GeneCompass v3 - gene compass BERT model for cell-cell communication analysis)
 class TensorType(ExplicitEnum):
     """
     Possible values for the ``return_tensors`` argument in :meth:`PreTrainedTokenizerBase.__call__`. Useful for

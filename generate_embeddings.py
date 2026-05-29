@@ -111,13 +111,20 @@ def generate_embeddings(dataset_path, model_path, token_dict_path, output_path,
     total_length = len(dataset)
     iters = total_length // batch_size
     
+<<<<<<< HEAD
     logger.info(f"Starting processing: Total samples: {total_length}, "
                 f"Batch size: {batch_size}, Total iterations: {iters + 1}")
+=======
+    total_batches = iters if total_length % batch_size == 0 else iters + 1
+    logger.info(f"Starting processing: Total samples: {total_length}, "
+                f"Batch size: {batch_size}, Total iterations: {total_batches}")
+>>>>>>> 0a00b04 (Initial commit: CCC-GeneCompass v3 - gene compass BERT model for cell-cell communication analysis)
     
     # Use list to store results on CPU
     emb_list = []
     
     with torch.no_grad():
+<<<<<<< HEAD
         for i in tqdm(range(iters + 1), desc="Processing batches"):
             try:
                 # Calculate current batch indices
@@ -126,6 +133,13 @@ def generate_embeddings(dataset_path, model_path, token_dict_path, output_path,
                     end_idx = (i + 1) * batch_size
                 else:
                     end_idx = total_length
+=======
+        for i in tqdm(range(total_batches), desc="Processing batches"):
+            try:
+                # Calculate current batch indices
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, total_length)
+>>>>>>> 0a00b04 (Initial commit: CCC-GeneCompass v3 - gene compass BERT model for cell-cell communication analysis)
                 
                 # Process current batch
                 emb_batch = process_batch_optimized(
