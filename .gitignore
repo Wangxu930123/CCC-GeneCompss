@@ -1,8 +1,17 @@
 # Large data & model directories
 pretrained_models/
 prior_knowledge/
-result/
-CellPhoneAnalysis/
+
+# CellPhoneAnalysis - exclude database, keep input configs
+CellPhoneAnalysis/v5.0.0/cellphonedb/
+CellPhoneAnalysis/v5.0.0/sources/
+CellPhoneAnalysis/v5.0.0/cellphonedb.zip
+
+# Large visualization PNGs (>20MB) - excluded due to push size limits
+result/eye_cv/interaction_network.png
+result/eye_cv/interaction_circular.png
+result/lung_cv/interaction_network.png
+result/lung_cv/interaction_circular.png
 
 # Python
 __pycache__/
